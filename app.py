@@ -1141,7 +1141,7 @@ def show_box_editor(edited):
     )
 
 
-def show_save_share(edited):
+def show_save_share(edited, can_share=True):
     """다운로드와 공유 버튼을 나란히 배치.
 
     can_share=True일 때만 공유 버튼을 활성화한다.
