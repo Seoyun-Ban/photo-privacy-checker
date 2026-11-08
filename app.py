@@ -1070,7 +1070,10 @@ def show_editor(risks):
             hint = " · 상자를 끌어 옮기고, 모서리를 끌어 크기를 바꾸세요" if count and ss.get("show_outline", True) else ""
             render(f'<div class="pl-edit-caption">가리는 영역 {count}곳{hint}</div>')
 
-        show_save_share(edited)
+        # 공유는 위험도가 '낮음'이거나, 사용자가 모자이크/블러를 적용(가림 영역 선택)한 뒤에만 활성화
+        masked = len(selected_regions()) > 0
+        can_share = ss.result["overall"] == "낮음" or masked
+        show_save_share(edited, can_share)
 
     with st.container(key="cta_card"):
         render(
@@ -1139,7 +1142,11 @@ def show_box_editor(edited):
 
 
 def show_save_share(edited):
-    """다운로드와 공유 버튼을 나란히 배치"""
+    """다운로드와 공유 버튼을 나란히 배치.
+
+    can_share=True일 때만 공유 버튼을 활성화한다.
+    (위험도 '낮음'이거나 사용자가 모자이크/블러를 적용한 경우)
+    """
     data = to_jpeg(edited)
     stem = Path(ss.photo["name"]).stem.removeprefix("수정본_")
     filename = f"privacy-lens_{stem}.jpg"
@@ -1150,14 +1157,31 @@ def show_save_share(edited):
                                key="download_btn", type="primary", width="stretch",
                                icon=":material/download:", on_click="ignore")
         with c2:
-            components.html(share_button_html(data, filename), height=50)
-    render(
-        '<div class="pl-edit-caption">다운로드·공유되는 사진에는 GPS 같은 촬영 정보(메타데이터)가 포함되지 않습니다.</div>'
-    )
+            if can_share:
+                components.html(share_button_html(data, filename), height=50)
+            else:
+                # 위험 요소가 남아 있고 아직 가리지 않은 경우: 공유 비활성 + 안내
+                components.html(share_disabled_html(), height=50)
+    if can_share:
+        render(
+            '<div class="pl-edit-caption">다운로드·공유되는 사진에는 GPS 같은 촬영 정보(메타데이터)가 포함되지 않습니다.</div>'
+        )
+    else:
+        render(
+            '<div class="pl-edit-caption">공유하려면 위험 요소를 먼저 가려 주세요. '
+            '다운로드·공유되는 사진에는 GPS 같은 촬영 정보(메타데이터)가 포함되지 않습니다.</div>'
+        )
 
 
 def share_button_html(data, filename):
-    """휴대폰 공유 시트(Web Share API)를 여는 버튼. 지원하지 않는 환경이면 안내 문구 표시"""
+    """휴대폰 공유 시트(Web Share API)를 여는 버튼. 지원하지 않는 환경이면 다운로드로 안내.
+
+    공유 버튼은 Streamlit components.html의 iframe 안에서 실행된다.
+    Web Share API는 'web-share' Permissions Policy로 게이트되며,
+    서드파티 iframe에서는 iframe에 allow="web-share"가 있어야 동작한다.
+    Streamlit은 allow 속성을 직접 주지 않으므로, 같은 오리진(srcdoc)인 점을 이용해
+    iframe(window.frameElement)에 allow="web-share"를 직접 설정해 자기 문서에 권한을 부여한다.
+    """
     b64 = base64.b64encode(data).decode("ascii")
     name = html.escape(filename, quote=True)
     return f"""
@@ -1177,15 +1201,27 @@ button:focus-visible {{outline:2px solid #246BFD; outline-offset:2px;}}
 (function() {{
   // 안내 문구는 버튼 자리에 표시 (iframe 높이가 고정이라 아래 줄에 쓰면 잘림)
   function say(t) {{ var b = document.getElementById("share"); b.textContent = t; b.style.fontSize = "12px"; b.style.fontWeight = "600"; }}
-  // Streamlit 컴포넌트는 iframe 안에서 실행되므로 가능하면 상위 창의 공유 기능을 사용
-  var win = window;
-  try {{ if (window.parent && window.parent.navigator && window.parent.navigator.share) win = window.parent; }} catch (e) {{}}
+
+  // 같은 오리진이면 자기 iframe에 web-share 권한을 부여해 iframe 제약을 푼다
+  try {{
+    var fe = window.frameElement;
+    if (fe) {{
+      var allow = fe.getAttribute("allow") || "";
+      if (allow.indexOf("web-share") === -1) {{
+        fe.setAttribute("allow", (allow ? allow + "; " : "") + "web-share");
+      }}
+    }}
+  }} catch (e) {{ /* 크로스오리진이면 접근 불가 - 아래 share 시도에서 처리 */ }}
+
+  // 이미지를 File로 만들어 navigator.share({{files}})로 공유
   var bin = atob("{b64}"), bytes = new Uint8Array(bin.length);
   for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   var file = null;
-  try {{ file = new win.File([bytes], "{name}", {{type: "image/jpeg"}}); }} catch (e) {{}}
+  try {{ file = new File([bytes], "{name}", {{type: "image/jpeg"}}); }} catch (e) {{}}
+
   document.getElementById("share").addEventListener("click", function() {{
-    var nav = win.navigator;
+    var nav = window.navigator;
+    // 파일 공유를 지원하지 않는 브라우저면 다운로드로 대신하도록 안내
     if (!file || !nav.share || !nav.canShare || !nav.canShare({{files: [file]}})) {{
       say("이 브라우저에서는 바로 공유가 안 돼요. 다운로드 후 공유해 주세요.");
       return;
@@ -1196,6 +1232,20 @@ button:focus-visible {{outline:2px solid #246BFD; outline-offset:2px;}}
   }});
 }})();
 </script>
+"""
+
+
+def share_disabled_html():
+    """공유를 아직 쓸 수 없을 때 보여주는 비활성 버튼 (위험 요소를 먼저 가리도록 안내)"""
+    return """
+<style>
+html, body {margin:0; padding:0; background:transparent;}
+button {width:100%; height:44px; border-radius:12px; border:1px solid #E6EBF2; background:#F2F4F8; color:#9AA4B5;
+  font-size:13px; font-weight:600; cursor:not-allowed; display:flex; align-items:center; justify-content:center; gap:6px;
+  font-family:"Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;}
+</style>
+<button type="button" disabled aria-label="공유 비활성화. 위험 요소를 먼저 가려 주세요">
+위험 요소를 먼저 가려 주세요</button>
 """
 
 
