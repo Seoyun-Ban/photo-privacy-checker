@@ -3,7 +3,7 @@
 SNS에 사진을 올리기 전, 사진 속에 숨은 개인정보 단서를 AI가 찾아 주고
 모자이크·블러로 안전하게 가린 뒤 바로 공유할 수 있는 서비스입니다.
 
-🔗 **[배포 주소](https://photo-privacy-checher-6jgd26xsjhrl56hczqvdku.streamlit.app/)**
+🔗 **[Privacy Lens](https://photo-privacy-checher-6jgd26xsjhrl56hczqvdku.streamlit.app/)**
 
 ## 문제
 얼굴 모자이크 앱은 있지만, 택배 송장·간판·교복·반사된 화면처럼
